@@ -600,7 +600,7 @@ After=network-online.target
 What=//$SERVER/$SHARE
 Where=$MOUNTPOINT
 Type=cifs
-Options=credentials=$CRED_FILE,vers=$SMB_VERSION,iocharset=utf8,file_mode=0777,dir_mode=0777,_netdev,nofail
+Options=credentials=$CRED_FILE,vers=$SMB_VERSION,iocharset=utf8,file_mode=0666,dir_mode=0777,noperm,_netdev,nofail
 TimeoutSec=30
 
 [Install]
