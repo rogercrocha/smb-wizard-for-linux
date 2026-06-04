@@ -1,5 +1,9 @@
 # smb-wizard
 
+[![release](https://img.shields.io/github/v/release/rogercrocha/smb-wizard-for-linux)](https://github.com/rogercrocha/smb-wizard-for-linux/releases)
+[![license](https://img.shields.io/github/license/rogercrocha/smb-wizard-for-linux)](LICENSE)
+![language](https://img.shields.io/github/languages/top/rogercrocha/smb-wizard-for-linux)
+
 Interactive SMB mount manager for Linux via systemd `.mount` units.
 Gerenciador interativo de montagens SMB para Linux via unidades `.mount` do systemd.
 
