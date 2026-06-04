@@ -452,6 +452,10 @@ criar_montagem() {
   echo
   read -rp "$(msg ask_server)" SERVER
   read -rp "$(msg ask_share)" SHARE
+  SHARE="${SHARE#/}"; SHARE="${SHARE%/}"
+  SHARE_ROOT="${SHARE%%/*}"
+  SHARE_SUBPATH=""
+  [[ "$SHARE" == */* ]] && SHARE_SUBPATH="${SHARE#*/}"
   while true; do
     read -rp "$(msg ask_mount)" MOUNTPOINT
     [[ -n "$MOUNTPOINT" ]] && break
@@ -499,12 +503,12 @@ criar_montagem() {
     local attempt=1
     while true; do
       echo
-      echo "$(msg preflight_check) //$SERVER/$SHARE"
+      echo "$(msg preflight_check) //$SERVER/$SHARE_ROOT"
       local PREFLIGHT_OUTPUT="" PREFLIGHT_FAILED=0
       if [[ -n "$DOMAIN" ]]; then
-        PREFLIGHT_OUTPUT="$(PASSWD="$PASSWORD" timeout 15 smbclient "//$SERVER/$SHARE" -U "$USERNAME" -W "$DOMAIN" -c "quit" 2>&1)" || PREFLIGHT_FAILED=1
+        PREFLIGHT_OUTPUT="$(PASSWD="$PASSWORD" timeout 15 smbclient "//$SERVER/$SHARE_ROOT" -U "$USERNAME" -W "$DOMAIN" -c "quit" 2>&1)" || PREFLIGHT_FAILED=1
       else
-        PREFLIGHT_OUTPUT="$(PASSWD="$PASSWORD" timeout 15 smbclient "//$SERVER/$SHARE" -U "$USERNAME" -c "quit" 2>&1)" || PREFLIGHT_FAILED=1
+        PREFLIGHT_OUTPUT="$(PASSWD="$PASSWORD" timeout 15 smbclient "//$SERVER/$SHARE_ROOT" -U "$USERNAME" -c "quit" 2>&1)" || PREFLIGHT_FAILED=1
       fi
       if (( PREFLIGHT_FAILED == 0 )); then
         msg preflight_ok; echo
