@@ -29,6 +29,16 @@ Bilingual (English / Portuguese) interactive wizard to create, list, edit and de
 - `ncurses` (`tput`) for arrow-key menus
 - `sudo` rights — the wizard calls `sudo` internally for privileged operations
 
+### Quick install (one-liner)
+
+Run the script directly from GitHub, no cloning needed:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/rogercrocha/smb-wizard-for-linux/main/smb-wizard.sh)
+```
+
+`bash <(curl ...)` (process substitution) is used instead of `curl ... | bash` so the interactive prompts and the arrow-key menu still work — the pipe form would consume stdin and break input. If you prefer to review the source before running it, use the clone-based installation below.
+
 ### Installation
 
 ```bash
@@ -80,6 +90,16 @@ Wizard interativo bilíngue (português / inglês) para criar, listar, editar e 
 - `smbclient` (pacote `samba-client`) para a checagem prévia; o script funciona sem ele mas pula a checagem
 - `ncurses` (`tput`) para os menus de seta
 - Permissão de `sudo` — o script chama `sudo` internamente para operações privilegiadas
+
+### Instalação rápida (linha única)
+
+Rodar o script direto do GitHub, sem clonar:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/rogercrocha/smb-wizard-for-linux/main/smb-wizard.sh)
+```
+
+Usamos `bash <(curl ...)` (process substitution) em vez de `curl ... | bash` para que os prompts interativos e o menu de setas continuem funcionando — a forma com pipe ocuparia o stdin e quebraria a entrada do usuário. Se preferir revisar o código antes de rodar, use a instalação por clone abaixo.
 
 ### Instalação
 
