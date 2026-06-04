@@ -27,6 +27,9 @@ LANG_CODE="$(detect_lang)"
 msg_pt() {
   case "$1" in
     title)           echo "Gerenciador de Montagens SMB" ;;
+    title_by)        echo "por rogercrocha" ;;
+    thanks_line1)    echo "Obrigado por usar o meu script!" ;;
+    thanks_line2)    echo "Se achou útil, considere deixar uma estrela no GitHub:" ;;
     menu_list)       echo "Listar montagens" ;;
     menu_create)     echo "Criar uma montagem" ;;
     menu_edit)       echo "Editar uma montagem" ;;
@@ -141,6 +144,9 @@ msg_pt() {
 msg_en() {
   case "$1" in
     title)           echo "SMB Mount Manager" ;;
+    title_by)        echo "by rogercrocha" ;;
+    thanks_line1)    echo "Thanks for using my script!" ;;
+    thanks_line2)    echo "If you found it useful, consider leaving a star on GitHub:" ;;
     menu_list)       echo "List mounts" ;;
     menu_create)     echo "Create a mount" ;;
     menu_edit)       echo "Edit a mount" ;;
@@ -901,6 +907,7 @@ while true; do
   echo
   echo "╔══════════════════════════════════════╗"
   printf "║  %-36s║\n" "$(msg title)"
+  printf "║  %-36s║\n" "$(msg title_by)"
   echo "╚══════════════════════════════════════╝"
   echo
 
@@ -916,7 +923,15 @@ while true; do
     2) criar_montagem ;;
     3) excluir_montagem ;;
     4) editar_montagem ;;
-    5|0) msg leaving; echo; exit 0 ;;
+    5)
+      echo
+      msg thanks_line1; echo
+      msg thanks_line2; echo
+      echo "https://github.com/rogercrocha/smb-wizard-for-linux"
+      echo
+      exit 0
+      ;;
+    0) msg leaving; echo; exit 0 ;;
   esac
 
   echo
