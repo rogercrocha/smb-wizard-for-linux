@@ -161,6 +161,16 @@ msg_pt() {
     deps_removing)   echo "==> Removendo dependências de serviço..." ;;
     edit_opt_boot)   echo "Comportamento no boot" ;;
     current_boot)    echo "Comportamento atual no boot:" ;;
+    wait_srv_hint1)  echo "O mount.cifs não fica tentando: se o servidor ainda não subiu, ele falha em" ;;
+    wait_srv_hint2)  echo "milissegundos e a montagem desiste — aumentar o tempo limite não adianta." ;;
+    wait_srv_hint3)  echo "O wizard pode gerar um serviço que aguarda a porta SMB do servidor responder" ;;
+    wait_srv_hint4)  echo "antes de tentar montar (útil quando o NAS demora mais para ligar que este PC)." ;;
+    wait_srv_q)      echo "Aguardar o servidor ficar disponível antes de montar? [Y/n]: " ;;
+    ask_wait_timeout) echo "Tempo máximo de espera pelo servidor, em segundos [300]: " ;;
+    wait_srv_lbl)    echo "aguarda servidor" ;;
+    generating_wait) echo "==> Gerando serviço de espera pelo servidor:" ;;
+    removing_wait)   echo "==> Removendo serviços de espera pelo servidor..." ;;
+    wait_srv_none)   echo "(sem espera pelo servidor)" ;;
   esac
 }
 
@@ -302,6 +312,16 @@ msg_en() {
     deps_removing)   echo "==> Removing service dependencies..." ;;
     edit_opt_boot)   echo "Boot behaviour" ;;
     current_boot)    echo "Current boot behaviour:" ;;
+    wait_srv_hint1)  echo "mount.cifs does not keep retrying: if the server is not up yet it fails in" ;;
+    wait_srv_hint2)  echo "milliseconds and the mount gives up — raising the timeout does not help." ;;
+    wait_srv_hint3)  echo "The wizard can generate a service that waits for the server's SMB port to answer" ;;
+    wait_srv_hint4)  echo "before mounting (useful when the NAS takes longer to boot than this machine)." ;;
+    wait_srv_q)      echo "Wait for the server to become available before mounting? [Y/n]: " ;;
+    ask_wait_timeout) echo "Maximum time to wait for the server, in seconds [300]: " ;;
+    wait_srv_lbl)    echo "waits for server" ;;
+    generating_wait) echo "==> Generating server-wait service:" ;;
+    removing_wait)   echo "==> Removing server-wait services..." ;;
+    wait_srv_none)   echo "(no server wait)" ;;
   esac
 }
 
@@ -440,6 +460,7 @@ coletar_montagens() {
   WHERES=()
   CREDS=()
   BOOTS=()
+  WAITS=()
 
   for unit_file in "$UNIT_DIR"/*.mount; do
     [[ -f "$unit_file" ]] || continue
@@ -449,6 +470,7 @@ coletar_montagens() {
     WHERES+=("$(grep -m1 '^Where=' "$unit_file" | cut -d= -f2-)")
     CREDS+=("$(grep -m1 'credentials=' "$unit_file" | grep -o 'credentials=[^ ,]*' | cut -d= -f2- || true)")
     BOOTS+=("$(unit_boot_mode "$unit_file")")
+    WAITS+=("$(unit_wait_unit "$unit_file")")
   done
 }
 
@@ -490,12 +512,19 @@ unit_boot_mode() {
   fi
 }
 
+# boot_mode_label <mode> [wait_unit]
 boot_mode_label() {
+  local label
   case "$1" in
-    2) msg boot_mode_wait ;;
-    3) msg boot_mode_require ;;
-    *) msg boot_mode_nowait ;;
+    2) label="$(msg boot_mode_wait)" ;;
+    3) label="$(msg boot_mode_require)" ;;
+    *) label="$(msg boot_mode_nowait)" ;;
   esac
+  if [[ -n "${2:-}" ]]; then
+    printf '%s + %s\n' "$label" "$(msg wait_srv_lbl)"
+  else
+    printf '%s\n' "$label"
+  fi
 }
 
 # Sem um serviço wait-online habilitado, network-online.target é atingido de
@@ -540,14 +569,25 @@ verificar_wait_online() {
   fi
 }
 
-# gerar_unidade <unit_file> <desc> <what> <where> <base_opts> <mode> <timeout>
+# gerar_unidade <unit_file> <desc> <what> <where> <base_opts> <mode> <timeout> [wait_unit]
 # base_opts nunca deve conter nofail; a função adiciona conforme o modo.
 # base_opts must never contain nofail; the function adds it per mode.
 gerar_unidade() {
   local unit_file="$1" desc="$2" what="$3" where="$4" opts="$5" mode="$6" tmo="$7"
+  local wait_unit="${8:-}"
   local install_line=""
   local deps="Requires=network-online.target
 After=network-online.target"
+
+  # Requires= faz a montagem desistir se a espera estourar o prazo, em vez de
+  # tentar montar contra um servidor que sabidamente não respondeu.
+  # Requires= makes the mount give up if the wait hits its deadline, instead of
+  # mounting against a server we already know did not answer.
+  if [[ -n "$wait_unit" ]]; then
+    deps="${deps}
+Requires=$wait_unit
+After=$wait_unit"
+  fi
 
   case "$mode" in
     2)
@@ -584,6 +624,68 @@ $install_line
 EOF
   sudo chown root:root "$unit_file"
   sudo chmod 644 "$unit_file"
+}
+
+# ── Espera pelo servidor / server wait ───────────────────────────────────────
+#
+# O mount.cifs não tem retentativa: contra um servidor que ainda não subiu ele
+# retorna erro em milissegundos, então TimeoutSec= alto não resolve nada. Este
+# serviço auxiliar sonda a porta SMB até o servidor responder e só então a
+# montagem é tentada.
+#
+# mount.cifs has no retry logic: against a server that is not up yet it errors
+# out in milliseconds, so a large TimeoutSec= buys nothing. This helper service
+# polls the SMB port until the server answers, and only then is the mount tried.
+
+WAIT_PREFIX="smb-wizard-wait-"
+WAIT_PORT=445
+WAIT_INTERVAL=5
+
+# wait_unit_name <escaped_unit_name>
+wait_unit_name() {
+  echo "${WAIT_PREFIX}$1.service"
+}
+
+# unit_wait_unit <unit_file> -> nome do serviço de espera, ou vazio
+unit_wait_unit() {
+  grep -m1 -oE "^Requires=${WAIT_PREFIX}[^ ]+\\.service" "$1" 2>/dev/null | cut -d= -f2- || true
+}
+
+# gerar_unidade_espera <escaped_unit_name> <server> <mountpoint> <deadline>
+gerar_unidade_espera() {
+  local esc="$1" server="$2" where="$3" deadline="$4"
+  local file="$UNIT_DIR/$(wait_unit_name "$esc")"
+
+  # /dev/tcp é builtin do bash: sem dependência extra no sistema alvo.
+  # O timeout externo evita travar no connect quando não há rota até o host.
+  # /dev/tcp is a bash builtin: no extra dependency on the target system.
+  # The outer timeout avoids hanging on connect when there is no route to host.
+  sudo tee "$file" > /dev/null <<EOF
+[Unit]
+Description=Wait for SMB server $server before mounting $where
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=$deadline
+ExecStart=/bin/bash -c 'until timeout 3 bash -c "exec 3<>/dev/tcp/$server/$WAIT_PORT" 2>/dev/null; do sleep $WAIT_INTERVAL; done; sleep 3'
+EOF
+  sudo chown root:root "$file"
+  sudo chmod 644 "$file"
+  echo "$file"
+}
+
+# remover_unidade_espera <escaped_unit_name>
+remover_unidade_espera() {
+  local esc="$1" name file
+  name="$(wait_unit_name "$esc")"
+  file="$UNIT_DIR/$name"
+  [[ -f "$file" ]] || return 0
+  sudo systemctl disable --now "$name" &>/dev/null || true
+  sudo rm -f "$file"
+  echo "$(msg removed) $file"
 }
 
 # aplicar_dependencias <escaped_unit_name> <mountpoint> <service...>
@@ -646,7 +748,7 @@ listar_montagens() {
     echo "       $(msg server_lbl):    ${WHATS[$i]}"
     echo "       $(msg mount_lbl):    ${WHERES[$i]}"
     echo "       $(msg status_lbl):      $(status_unidade "$UNIT_NAME")"
-    echo "       $(msg boot_lbl):        $(boot_mode_label "${BOOTS[$i]}")"
+    echo "       $(msg boot_lbl):        $(boot_mode_label "${BOOTS[$i]}" "${WAITS[$i]}")"
     echo "       $(msg cred_lbl): ${CREDS[$i]:-$(msg cred_undef)}"
     echo
   done
@@ -695,12 +797,29 @@ criar_montagem() {
 
   MOUNT_TIMEOUT=30
   DEP_SERVICES=""
+  WAIT_DEADLINE=0
   if (( BOOT_MODE > 1 )); then
     (( BOOT_MODE == 3 )) && { echo; msg boot_warn_require; echo; }
     echo
     read -rp "$(msg ask_boot_timeout)" MOUNT_TIMEOUT
     MOUNT_TIMEOUT="${MOUNT_TIMEOUT:-90}"
     [[ "$MOUNT_TIMEOUT" =~ ^[0-9]+$ ]] || MOUNT_TIMEOUT=90
+
+    echo
+    msg wait_srv_hint1; echo
+    msg wait_srv_hint2; echo
+    msg wait_srv_hint3; echo
+    msg wait_srv_hint4; echo
+    echo
+    read -rp "$(msg wait_srv_q)" WAIT_SRV
+    WAIT_SRV="${WAIT_SRV:-y}"
+    if [[ "$WAIT_SRV" == "y" || "$WAIT_SRV" == "Y" ]]; then
+      read -rp "$(msg ask_wait_timeout)" WAIT_DEADLINE
+      WAIT_DEADLINE="${WAIT_DEADLINE:-300}"
+      [[ "$WAIT_DEADLINE" =~ ^[0-9]+$ ]] && (( WAIT_DEADLINE > 0 )) || WAIT_DEADLINE=300
+    fi
+
+    echo
     read -rp "$(msg deps_q)" DEP_SERVICES
   fi
 
@@ -726,7 +845,11 @@ criar_montagem() {
   echo "$(msg sum_cred)$CRED_FILE"
   echo "$(msg sum_smbver)$SMB_VERSION"
   echo "$(msg sum_domain)${DOMAIN:-$(msg sum_nodomain)}"
-  echo "$(msg sum_boot)$(boot_mode_label "$BOOT_MODE") (TimeoutSec=${MOUNT_TIMEOUT}s)"
+  if (( WAIT_DEADLINE > 0 )); then
+    echo "$(msg sum_boot)$(boot_mode_label "$BOOT_MODE") + $(msg wait_srv_lbl) (${WAIT_DEADLINE}s), TimeoutSec=${MOUNT_TIMEOUT}s"
+  else
+    echo "$(msg sum_boot)$(boot_mode_label "$BOOT_MODE") (TimeoutSec=${MOUNT_TIMEOUT}s)"
+  fi
   echo
   read -rp "$(msg proceed)" CONFIRM
   CONFIRM="${CONFIRM:-n}"
@@ -832,6 +955,13 @@ criar_montagem() {
     | sudo tee "$CRED_FILE" > /dev/null
   [[ -n "$DOMAIN" ]] && printf 'domain=%s\n' "$DOMAIN" | sudo tee -a "$CRED_FILE" > /dev/null
 
+  WAIT_UNIT=""
+  if (( WAIT_DEADLINE > 0 )); then
+    WAIT_UNIT="$(wait_unit_name "$UNIT_NAME")"
+    echo "$(msg generating_wait) $UNIT_DIR/$WAIT_UNIT"
+    gerar_unidade_espera "$UNIT_NAME" "$SERVER" "$MOUNTPOINT" "$WAIT_DEADLINE" > /dev/null
+  fi
+
   echo "$(msg generating) $UNIT_FILE"
   gerar_unidade \
     "$UNIT_FILE" \
@@ -840,12 +970,14 @@ criar_montagem() {
     "$MOUNTPOINT" \
     "credentials=$CRED_FILE,vers=$SMB_VERSION,iocharset=utf8,file_mode=0666,dir_mode=0777,noperm,_netdev" \
     "$BOOT_MODE" \
-    "$MOUNT_TIMEOUT"
+    "$MOUNT_TIMEOUT" \
+    "$WAIT_UNIT"
 
   msg validating; echo
   systemd-analyze verify "$UNIT_FILE" 2>&1 || {
     msg unit_error; echo
     sudo rm -f "$UNIT_FILE"
+    [[ -n "$WAIT_UNIT" ]] && remover_unidade_espera "$UNIT_NAME" > /dev/null
     return
   }
 
@@ -864,6 +996,7 @@ criar_montagem() {
       msg rollback_doing; echo
       sudo systemctl disable "${UNIT_NAME}.mount" 2>/dev/null || true
       sudo rm -f "$UNIT_FILE" "$CRED_FILE"
+      [[ -n "$WAIT_UNIT" ]] && remover_unidade_espera "$UNIT_NAME" > /dev/null
       sudo systemctl daemon-reload
       sudo systemctl reset-failed "${UNIT_NAME}.mount" 2>/dev/null || true
       sudo rmdir "$MOUNTPOINT" 2>/dev/null || true
@@ -916,7 +1049,7 @@ excluir_montagem() {
     echo "       $(msg server_lbl):    ${WHATS[$i]}"
     echo "       $(msg mount_lbl):     ${WHERES[$i]}"
     echo "       $(msg status_lbl):    $(status_unidade "$UNIT_NAME")"
-    echo "       $(msg boot_lbl):      $(boot_mode_label "${BOOTS[$i]}")"
+    echo "       $(msg boot_lbl):      $(boot_mode_label "${BOOTS[$i]}" "${WAITS[$i]}")"
     echo "       $(msg cred_lbl): ${CREDS[$i]:-$(msg cred_undef)}"
     echo
   done
@@ -1000,6 +1133,12 @@ excluir_montagem() {
     remover_dependencias "${UNIT_NAME%.mount}"
   done
 
+  msg removing_wait; echo
+  for unit_file in "${SELECTED_UNITS[@]}"; do
+    UNIT_NAME="$(basename "$unit_file")"
+    remover_unidade_espera "${UNIT_NAME%.mount}"
+  done
+
   msg removing_units; echo
   for unit_file in "${SELECTED_UNITS[@]}"; do
     sudo rm -f "$unit_file"
@@ -1050,7 +1189,7 @@ editar_montagem() {
     echo "       $(msg server_lbl):    ${WHATS[$i]}"
     echo "       $(msg mount_lbl):     ${WHERES[$i]}"
     echo "       $(msg status_lbl):    $(status_unidade "$UNIT_NAME")"
-    echo "       $(msg boot_lbl):      $(boot_mode_label "${BOOTS[$i]}")"
+    echo "       $(msg boot_lbl):      $(boot_mode_label "${BOOTS[$i]}" "${WAITS[$i]}")"
     echo "       $(msg cred_lbl): ${CREDS[$i]:-$(msg cred_undef)}"
     echo
   done
@@ -1127,10 +1266,12 @@ editar_montagem() {
       sudo sed -i -E "s/(vers=)[^,]+/\1${NEW_VER}/" "$TARGET_UNIT"
       ;;
     3)
-      local CUR_MODE NEW_MODE NEW_TMO DESC WHAT WHERE OPTS
+      local CUR_MODE CUR_WAIT NEW_MODE NEW_TMO NEW_WAIT NEW_DEADLINE
+      local DESC WHAT WHERE OPTS SRV
       CUR_MODE="$(unit_boot_mode "$TARGET_UNIT")"
+      CUR_WAIT="$(unit_wait_unit "$TARGET_UNIT")"
       echo
-      echo "$(msg current_boot) $(boot_mode_label "$CUR_MODE")"
+      echo "$(msg current_boot) $(boot_mode_label "$CUR_MODE" "$CUR_WAIT")"
       echo
       msg boot_q; echo
       menu_select \
@@ -1145,12 +1286,28 @@ editar_montagem() {
       fi
 
       NEW_TMO=30
+      NEW_DEADLINE=0
       if (( NEW_MODE > 1 )); then
         (( NEW_MODE == 3 )) && { echo; msg boot_warn_require; echo; }
         echo
         read -rp "$(msg ask_boot_timeout)" NEW_TMO
         NEW_TMO="${NEW_TMO:-90}"
         [[ "$NEW_TMO" =~ ^[0-9]+$ ]] || NEW_TMO=90
+
+        echo
+        msg wait_srv_hint1; echo
+        msg wait_srv_hint2; echo
+        msg wait_srv_hint3; echo
+        msg wait_srv_hint4; echo
+        echo
+        local ANS=""
+        read -rp "$(msg wait_srv_q)" ANS
+        ANS="${ANS:-y}"
+        if [[ "$ANS" == "y" || "$ANS" == "Y" ]]; then
+          read -rp "$(msg ask_wait_timeout)" NEW_DEADLINE
+          NEW_DEADLINE="${NEW_DEADLINE:-300}"
+          [[ "$NEW_DEADLINE" =~ ^[0-9]+$ ]] && (( NEW_DEADLINE > 0 )) || NEW_DEADLINE=300
+        fi
       fi
 
       DESC="$(grep -m1 '^Description=' "$TARGET_UNIT" | cut -d= -f2-)"
@@ -1166,9 +1323,25 @@ editar_montagem() {
         verificar_wait_online
       fi
 
+      # //servidor/share -> servidor
+      SRV="${WHAT#//}"
+      SRV="${SRV%%/*}"
+
+      NEW_WAIT=""
+      if (( NEW_DEADLINE > 0 )); then
+        NEW_WAIT="$(wait_unit_name "${UNIT_NAME%.mount}")"
+        echo
+        echo "$(msg generating_wait) $UNIT_DIR/$NEW_WAIT"
+        gerar_unidade_espera "${UNIT_NAME%.mount}" "$SRV" "$WHERE" "$NEW_DEADLINE" > /dev/null
+      elif [[ -n "$CUR_WAIT" ]]; then
+        echo
+        msg removing_wait; echo
+        remover_unidade_espera "${UNIT_NAME%.mount}"
+      fi
+
       echo
       echo "$(msg generating) $TARGET_UNIT"
-      gerar_unidade "$TARGET_UNIT" "$DESC" "$WHAT" "$WHERE" "$OPTS" "$NEW_MODE" "$NEW_TMO"
+      gerar_unidade "$TARGET_UNIT" "$DESC" "$WHAT" "$WHERE" "$OPTS" "$NEW_MODE" "$NEW_TMO" "$NEW_WAIT"
       REENABLE=1
       ;;
     *)

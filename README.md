@@ -23,6 +23,7 @@ Bilingual (English / Portuguese) interactive wizard to create, list, edit and de
 - Auth retry loop with attempt counter (3 attempts) to avoid server-side account lockout.
 - Automatic rollback if `systemctl enable --now` fails after files were already written.
 - Selectable boot behaviour: let boot continue while the share mounts in the background, or hold the boot until the remote server answers. See [Boot behaviour](#boot-behaviour).
+- Optionally waits for the server's SMB port to answer before mounting, so a NAS that boots slower than the client does not leave the mount failed. See [Waiting for a slow server](#waiting-for-a-slow-server).
 - Optionally makes other services (Docker, Home Assistant, …) start only after the share is mounted, via a `RequiresMountsFor` drop-in.
 - Edit existing mounts: change credentials, SMB protocol version or boot behaviour, with `daemon-reload` and live remount.
 - Cleanup option that removes one or all mounts, with their units, credential files and empty mountpoint directories.
@@ -100,6 +101,56 @@ For the two waiting modes the wizard also:
 Boot behaviour is shown for every mount in the listing, and switching a mount
 between modes rewrites the unit and redoes the `systemctl enable` symlinks.
 
+#### What happens when the mount fails
+
+`mount.cifs` has no retry logic of its own. Against a server that is not up yet
+it returns an error in **milliseconds** — connection refused, no route to host or
+a name that does not resolve — so raising `TimeoutSec=` buys nothing at all: the
+mount does not spend that time waiting, it fails immediately and stays failed.
+
+Once the mount unit is `failed`, systemd does not retry it, and every service
+with a `RequiresMountsFor` drop-in for that path refuses to start. In both
+waiting modes that means the mount is down and Docker (or whatever depends on
+it) stays down until someone intervenes. Mode 3 additionally leaves the system
+`degraded`. That is what the option below is for.
+
+### Waiting for a slow server
+
+Typical case: after a power cut, a Raspberry Pi finishes booting long before the
+NAS it mounts from. When the two waiting boot modes are selected, the wizard
+offers to generate a companion unit,
+`/etc/systemd/system/smb-wizard-wait-<mount>.service`:
+
+```ini
+[Unit]
+Description=Wait for SMB server nas.local before mounting /mnt/nas
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=300
+ExecStart=/bin/bash -c 'until timeout 3 bash -c "exec 3<>/dev/tcp/nas.local/445" 2>/dev/null; do sleep 5; done; sleep 3'
+```
+
+It polls the server's SMB port (445) every 5 seconds until it answers, then
+waits 3 more seconds for the server to settle. The mount unit gains
+`Requires=` and `After=` on it, so the mount is only attempted once the server
+is actually reachable, and boot holds there in the meantime. The polling uses
+bash's `/dev/tcp`, so nothing extra needs to be installed.
+
+`TimeoutStartSec=` is the deadline you choose (default 300 s). If the server
+never shows up within it, the wait service fails, and `Requires=` makes the
+mount give up rather than mount against a server known not to answer — the same
+failed state as before, but only after a real deadline instead of after a few
+milliseconds. Pick a deadline comfortably above your server's worst-case boot
+time.
+
+The wait service is removed together with the mount by *Delete a mount*, and can
+be added to or removed from an existing mount through *Edit a mount* → *Boot
+behaviour*.
+
 ### License
 
 MIT — see `LICENSE`.
@@ -120,6 +171,7 @@ Wizard interativo bilíngue (português / inglês) para criar, listar, editar e 
 - Loop de retentativa de autenticação com contador (3 tentativas) para evitar bloqueio de conta no servidor.
 - Rollback automático se `systemctl enable --now` falhar depois que os arquivos já foram escritos.
 - Comportamento no boot selecionável: deixar o boot seguir enquanto o compartilhamento monta em segundo plano, ou segurar o boot até o servidor remoto responder. Veja [Comportamento no boot](#comportamento-no-boot).
+- Opcionalmente aguarda a porta SMB do servidor responder antes de montar, para que um NAS que liga mais devagar que o cliente não deixe a montagem falhada. Veja [Aguardando um servidor lento](#aguardando-um-servidor-lento).
 - Opcionalmente faz outros serviços (Docker, Home Assistant, …) iniciarem só depois que o compartilhamento estiver montado, via drop-in `RequiresMountsFor`.
 - Edição de montagens existentes: trocar credenciais, versão do protocolo SMB ou comportamento no boot, com `daemon-reload` e remontagem ao vivo.
 - Limpeza removendo uma ou todas as montagens, com suas unidades, arquivos de credencial e diretórios vazios.
@@ -198,6 +250,56 @@ Nos dois modos de espera o wizard também:
 
 O comportamento no boot é exibido para cada montagem na listagem, e trocar de
 modo reescreve a unidade e refaz os symlinks do `systemctl enable`.
+
+#### O que acontece quando a montagem falha
+
+O `mount.cifs` não tem retentativa própria. Contra um servidor que ainda não
+subiu ele retorna erro em **milissegundos** — conexão recusada, sem rota até o
+host ou nome que não resolve — então aumentar o `TimeoutSec=` não adianta nada:
+a montagem não passa esse tempo esperando, ela falha na hora e fica falhada.
+
+Uma vez que a unidade de montagem está `failed`, o systemd não tenta de novo, e
+todo serviço com drop-in `RequiresMountsFor` para aquele caminho se recusa a
+iniciar. Nos dois modos de espera isso significa montagem fora do ar e Docker (ou
+o que quer que dependa dela) parado até alguém intervir. O modo 3 ainda deixa o
+sistema `degraded`. É exatamente para isso que serve a opção abaixo.
+
+### Aguardando um servidor lento
+
+Caso típico: depois de uma queda de energia, um Raspberry Pi termina o boot muito
+antes do NAS de onde ele monta. Quando um dos dois modos de espera é escolhido, o
+wizard oferece gerar uma unidade acompanhante,
+`/etc/systemd/system/smb-wizard-wait-<montagem>.service`:
+
+```ini
+[Unit]
+Description=Wait for SMB server nas.local before mounting /mnt/nas
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=300
+ExecStart=/bin/bash -c 'until timeout 3 bash -c "exec 3<>/dev/tcp/nas.local/445" 2>/dev/null; do sleep 5; done; sleep 3'
+```
+
+Ela sonda a porta SMB do servidor (445) a cada 5 segundos até responder e então
+espera mais 3 segundos para o servidor assentar. A unidade de montagem ganha
+`Requires=` e `After=` sobre ela, de modo que a montagem só é tentada quando o
+servidor está de fato acessível — e o boot fica segurando nesse ponto. A sondagem
+usa o `/dev/tcp` do bash, então nada extra precisa ser instalado.
+
+O `TimeoutStartSec=` é o prazo que você escolhe (padrão 300 s). Se o servidor não
+aparecer dentro dele, o serviço de espera falha, e o `Requires=` faz a montagem
+desistir em vez de montar contra um servidor que sabidamente não respondeu — o
+mesmo estado de falha de antes, mas só depois de um prazo real, e não depois de
+alguns milissegundos. Escolha um prazo folgado em relação ao pior caso de boot do
+seu servidor.
+
+O serviço de espera é removido junto com a montagem pela opção *Excluir uma
+montagem*, e pode ser adicionado ou retirado de uma montagem existente em
+*Editar uma montagem* → *Comportamento no boot*.
 
 ### Licença
 
