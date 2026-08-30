@@ -130,7 +130,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-TimeoutStartSec=300
+TimeoutStartSec=600
 ExecStart=/bin/bash -c 'until timeout 3 bash -c "exec 3<>/dev/tcp/nas.local/445" 2>/dev/null; do sleep 5; done; sleep 3'
 ```
 
@@ -140,12 +140,30 @@ waits 3 more seconds for the server to settle. The mount unit gains
 is actually reachable, and boot holds there in the meantime. The polling uses
 bash's `/dev/tcp`, so nothing extra needs to be installed.
 
-`TimeoutStartSec=` is the deadline you choose (default 300 s). If the server
-never shows up within it, the wait service fails, and `Requires=` makes the
-mount give up rather than mount against a server known not to answer — the same
-failed state as before, but only after a real deadline instead of after a few
-milliseconds. Pick a deadline comfortably above your server's worst-case boot
-time.
+`TimeoutStartSec=` is the deadline you choose (default 600 s — 10 minutes). If the
+server never shows up within it, the wait service fails, and `Requires=` makes
+the mount give up rather than mount against a server known not to answer — the
+same failed state as before, but only after a real deadline instead of after a
+few milliseconds.
+
+Ten minutes is the default because the scenario this targets is a general power
+cut, where the whole chain comes back at once: the modem and router have to
+finish before DNS resolves at all, and the server itself is doing a *dirty*
+boot — filesystem checks, RAID consistency verification — which can take several
+times longer than a clean one. Size the deadline against that, not against a
+normal restart.
+
+Waiting that long is cheaper than it sounds: what the wait holds back is
+`remote-fs.target` and whatever is ordered after it (Docker, via the drop-in
+above). `sshd` does not order itself after `remote-fs.target`, so you normally
+keep SSH access to the machine while the wait is pending. Worth confirming on
+your own system — `systemctl show sshd -p After | tr ' ' '\n' | grep -c remote-fs`
+should print `0`.
+
+The wait loop is also what makes a slow modem harmless. It retries through name
+resolution failures, so a hostname that does not resolve yet simply fails one
+probe and is tried again 5 seconds later, until the router is back and answering
+DNS.
 
 The wait service is removed together with the mount by *Delete a mount*, and can
 be added to or removed from an existing mount through *Edit a mount* → *Boot
@@ -280,7 +298,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-TimeoutStartSec=300
+TimeoutStartSec=600
 ExecStart=/bin/bash -c 'until timeout 3 bash -c "exec 3<>/dev/tcp/nas.local/445" 2>/dev/null; do sleep 5; done; sleep 3'
 ```
 
@@ -290,12 +308,30 @@ espera mais 3 segundos para o servidor assentar. A unidade de montagem ganha
 servidor está de fato acessível — e o boot fica segurando nesse ponto. A sondagem
 usa o `/dev/tcp` do bash, então nada extra precisa ser instalado.
 
-O `TimeoutStartSec=` é o prazo que você escolhe (padrão 300 s). Se o servidor não
-aparecer dentro dele, o serviço de espera falha, e o `Requires=` faz a montagem
-desistir em vez de montar contra um servidor que sabidamente não respondeu — o
-mesmo estado de falha de antes, mas só depois de um prazo real, e não depois de
-alguns milissegundos. Escolha um prazo folgado em relação ao pior caso de boot do
-seu servidor.
+O `TimeoutStartSec=` é o prazo que você escolhe (padrão 600 s — 10 minutos). Se o
+servidor não aparecer dentro dele, o serviço de espera falha, e o `Requires=` faz
+a montagem desistir em vez de montar contra um servidor que sabidamente não
+respondeu — o mesmo estado de falha de antes, mas só depois de um prazo real, e
+não depois de alguns milissegundos.
+
+Dez minutos é o padrão porque o cenário alvo é uma queda de energia geral, em que
+a cadeia inteira volta junto: o modem e o roteador precisam terminar antes de o
+DNS sequer resolver, e o servidor está fazendo um boot *sujo* — checagem de
+sistema de arquivos, verificação de consistência do RAID — que pode levar várias
+vezes o tempo de um boot limpo. Dimensione o prazo por esse pior caso, não por um
+reinício normal.
+
+Esperar tudo isso custa menos do que parece: o que a espera segura é o
+`remote-fs.target` e o que vem ordenado depois dele (o Docker, via o drop-in
+acima). O `sshd` não se ordena depois do `remote-fs.target`, então você
+normalmente mantém acesso SSH à máquina enquanto a espera está pendente. Vale
+confirmar no seu sistema — `systemctl show sshd -p After | tr ' ' '\n' | grep -c remote-fs`
+deve imprimir `0`.
+
+O loop de espera também é o que torna um modem lento inofensivo. Ele retenta
+inclusive quando o nome não resolve, então um hostname ainda sem DNS apenas falha
+uma sondagem e é tentado de novo 5 segundos depois, até o roteador voltar e
+responder.
 
 O serviço de espera é removido junto com a montagem pela opção *Excluir uma
 montagem*, e pode ser adicionado ou retirado de uma montagem existente em

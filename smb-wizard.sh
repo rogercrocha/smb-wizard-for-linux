@@ -166,7 +166,7 @@ msg_pt() {
     wait_srv_hint3)  echo "O wizard pode gerar um serviço que aguarda a porta SMB do servidor responder" ;;
     wait_srv_hint4)  echo "antes de tentar montar (útil quando o NAS demora mais para ligar que este PC)." ;;
     wait_srv_q)      echo "Aguardar o servidor ficar disponível antes de montar? [Y/n]: " ;;
-    ask_wait_timeout) echo "Tempo máximo de espera pelo servidor, em segundos [300]: " ;;
+    ask_wait_timeout) echo "Tempo máximo de espera pelo servidor, em segundos [600]: " ;;
     wait_srv_lbl)    echo "aguarda servidor" ;;
     generating_wait) echo "==> Gerando serviço de espera pelo servidor:" ;;
     removing_wait)   echo "==> Removendo serviços de espera pelo servidor..." ;;
@@ -317,7 +317,7 @@ msg_en() {
     wait_srv_hint3)  echo "The wizard can generate a service that waits for the server's SMB port to answer" ;;
     wait_srv_hint4)  echo "before mounting (useful when the NAS takes longer to boot than this machine)." ;;
     wait_srv_q)      echo "Wait for the server to become available before mounting? [Y/n]: " ;;
-    ask_wait_timeout) echo "Maximum time to wait for the server, in seconds [300]: " ;;
+    ask_wait_timeout) echo "Maximum time to wait for the server, in seconds [600]: " ;;
     wait_srv_lbl)    echo "waits for server" ;;
     generating_wait) echo "==> Generating server-wait service:" ;;
     removing_wait)   echo "==> Removing server-wait services..." ;;
@@ -815,8 +815,8 @@ criar_montagem() {
     WAIT_SRV="${WAIT_SRV:-y}"
     if [[ "$WAIT_SRV" == "y" || "$WAIT_SRV" == "Y" ]]; then
       read -rp "$(msg ask_wait_timeout)" WAIT_DEADLINE
-      WAIT_DEADLINE="${WAIT_DEADLINE:-300}"
-      [[ "$WAIT_DEADLINE" =~ ^[0-9]+$ ]] && (( WAIT_DEADLINE > 0 )) || WAIT_DEADLINE=300
+      WAIT_DEADLINE="${WAIT_DEADLINE:-600}"
+      [[ "$WAIT_DEADLINE" =~ ^[0-9]+$ ]] && (( WAIT_DEADLINE > 0 )) || WAIT_DEADLINE=600
     fi
 
     echo
@@ -1305,8 +1305,8 @@ editar_montagem() {
         ANS="${ANS:-y}"
         if [[ "$ANS" == "y" || "$ANS" == "Y" ]]; then
           read -rp "$(msg ask_wait_timeout)" NEW_DEADLINE
-          NEW_DEADLINE="${NEW_DEADLINE:-300}"
-          [[ "$NEW_DEADLINE" =~ ^[0-9]+$ ]] && (( NEW_DEADLINE > 0 )) || NEW_DEADLINE=300
+          NEW_DEADLINE="${NEW_DEADLINE:-600}"
+          [[ "$NEW_DEADLINE" =~ ^[0-9]+$ ]] && (( NEW_DEADLINE > 0 )) || NEW_DEADLINE=600
         fi
       fi
 
