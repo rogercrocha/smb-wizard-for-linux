@@ -82,6 +82,9 @@ msg_pt() {
     ask_domain)      echo "Domínio/Grupo de Trabalho (ENTER se não usado): " ;;
     ask_smbver)      echo "Versão SMB (ex: 3.0, 3.1.1, 2.1) [3.0]: " ;;
     mount_required)  echo "O caminho é obrigatório. Digite o ponto de montagem." ;;
+    server_required) echo "O servidor é obrigatório. Digite o nome do host ou o IP." ;;
+    share_required)  echo "O compartilhamento é obrigatório — //servidor/ sozinho não é montável." ;;
+    share_detected)  echo "Compartilhamento detectado no que você digitou (ENTER aceita):" ;;
     summary)         echo "==> Resumo da configuração:" ;;
     sum_server)      echo "    Servidor:    " ;;
     sum_mount)       echo "    Montagem:    " ;;
@@ -242,6 +245,9 @@ msg_en() {
     ask_domain)      echo "Domain/Workgroup (press ENTER if not used): " ;;
     ask_smbver)      echo "SMB version (e.g. 3.0, 3.1.1, 2.1) [3.0]: " ;;
     mount_required)  echo "Mount point is required. Please enter a path." ;;
+    server_required) echo "Server is required. Please enter a hostname or IP." ;;
+    share_required)  echo "Share name is required — //server/ on its own cannot be mounted." ;;
+    share_detected)  echo "Share detected in what you typed (ENTER accepts it):" ;;
     summary)         echo "==> Configuration summary:" ;;
     sum_server)      echo "    Server:      " ;;
     sum_mount)       echo "    Mount point: " ;;
@@ -935,6 +941,28 @@ aplicar_dependencias() {
   done
 }
 
+# validar_unidade <unit_file>
+# O systemd-analyze carrega toda a árvore de dependências, então avisos sobre
+# unidades de terceiros (CasaOS, Docker...) aparecem junto e assustam à toa.
+# Em caso de sucesso, mostra só o que fala da nossa unidade; se falhar, mostra tudo.
+# systemd-analyze loads the whole dependency tree, so warnings about unrelated
+# units (CasaOS, Docker...) come along and look alarming. On success show only
+# what mentions our own unit; on failure show everything.
+validar_unidade() {
+  local unit_file="$1" out="" rc=0 name
+  name="$(basename "$unit_file")"
+
+  out="$(systemd-analyze verify "$unit_file" 2>&1)" || rc=$?
+
+  if (( rc != 0 )); then
+    [[ -n "$out" ]] && echo "$out"
+    return 1
+  fi
+
+  [[ -n "$out" ]] && grep -F "$name" <<< "$out" || true
+  return 0
+}
+
 # listar_dependencias <escaped_unit_name> -> serviços já configurados
 listar_dependencias() {
   local esc="$1" dropin dir out=""
@@ -996,9 +1024,35 @@ criar_montagem() {
   fi
 
   echo
-  read -rp "$(msg ask_server)" SERVER
-  read -rp "$(msg ask_share)" SHARE
-  SHARE="${SHARE#/}"; SHARE="${SHARE%/}"
+  # Um share vazio gera What=//servidor/ , que o mount.cifs rejeita com
+  # "Invalid argument" só na hora de montar. Exigir aqui.
+  # An empty share produces What=//server/ , which mount.cifs only rejects with
+  # "Invalid argument" at mount time. Require it up front.
+  PASTED_SHARE=""
+  while true; do
+    read -rp "$(msg ask_server)" SERVER
+    # Aceita colagem no estilo Windows (\\servidor\share) ou UNC (//servidor/share).
+    # Accepts a Windows-style (\\server\share) or UNC (//server/share) paste.
+    SERVER="${SERVER//\\//}"
+    SERVER="${SERVER#//}"; SERVER="${SERVER#/}"
+    if [[ "$SERVER" == */* ]]; then
+      PASTED_SHARE="${SERVER#*/}"
+      SERVER="${SERVER%%/*}"
+    fi
+    [[ -n "$SERVER" ]] && break
+    echo "$(msg server_required)"
+  done
+
+  [[ -n "$PASTED_SHARE" ]] && echo "$(msg share_detected) $PASTED_SHARE"
+
+  while true; do
+    read -rp "$(msg ask_share)" SHARE
+    SHARE="${SHARE:-$PASTED_SHARE}"
+    SHARE="${SHARE//\\//}"
+    SHARE="${SHARE#/}"; SHARE="${SHARE%/}"
+    [[ -n "$SHARE" ]] && break
+    echo "$(msg share_required)"
+  done
   SHARE_ROOT="${SHARE%%/*}"
   SHARE_SUBPATH=""
   [[ "$SHARE" == */* ]] && SHARE_SUBPATH="${SHARE#*/}"
@@ -1204,7 +1258,7 @@ criar_montagem() {
     "$WAIT_UNIT"
 
   msg validating; echo
-  systemd-analyze verify "$UNIT_FILE" 2>&1 || {
+  validar_unidade "$UNIT_FILE" || {
     msg unit_error; echo
     sudo rm -f "$UNIT_FILE"
     [[ -n "$WAIT_UNIT" ]] && remover_unidade_espera "$UNIT_NAME" > /dev/null
@@ -1605,7 +1659,7 @@ editar_montagem() {
   esac
 
   msg validating; echo
-  systemd-analyze verify "$TARGET_UNIT" 2>&1 || {
+  validar_unidade "$TARGET_UNIT" || {
     msg unit_error; echo
     return
   }

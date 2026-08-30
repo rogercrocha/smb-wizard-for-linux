@@ -32,7 +32,7 @@ Bilingual (English / Portuguese) interactive wizard to create, list, edit and de
 
 - `bash` 4+
 - `systemd`, `findmnt`, `mount.cifs` (package `cifs-utils`)
-- `smbclient` (package `samba-client`) for the pre-flight check; the wizard works without it but skips the check
+- `smbclient` (package `smbclient` on Debian / Raspberry Pi OS, `samba-client` on Fedora / RHEL) for the pre-flight check; the wizard works without it but skips the check, which is what catches a wrong server, share or password before anything is written
 - `ncurses` (`tput`) for arrow-key menus
 - `sudo` rights — the wizard calls `sudo` internally for privileged operations
 
@@ -237,7 +237,7 @@ Wizard interativo bilíngue (português / inglês) para criar, listar, editar e 
 
 - `bash` 4+
 - `systemd`, `findmnt`, `mount.cifs` (pacote `cifs-utils`)
-- `smbclient` (pacote `samba-client`) para a checagem prévia; o script funciona sem ele mas pula a checagem
+- `smbclient` (pacote `smbclient` no Debian / Raspberry Pi OS, `samba-client` no Fedora / RHEL) para a checagem prévia; o script funciona sem ele mas pula a checagem, que é justamente o que pega servidor, compartilhamento ou senha errados antes de gravar qualquer coisa
 - `ncurses` (`tput`) para os menus de seta
 - Permissão de `sudo` — o script chama `sudo` internamente para operações privilegiadas
 
