@@ -118,7 +118,7 @@ msg_pt() {
     edit_what)       echo "O que deseja editar?" ;;
     edit_opt_creds)  echo "Credenciais (usuário/senha/domínio)" ;;
     edit_opt_smbver) echo "Versão SMB" ;;
-    edit_choose_field) echo "Escolha [0/1/2]: " ;;
+    edit_choose_field) echo "Escolha [0/1/2/3]: " ;;
     cred_not_found)  echo "Arquivo de credenciais não encontrado:" ;;
     current_smbver)  echo "Versão SMB atual:" ;;
     remounting)      echo "==> Remontando:" ;;
@@ -137,6 +137,30 @@ msg_pt() {
     rollback_doing)  echo "==> Revertendo arquivos criados..." ;;
     rollback_done)   echo "    Rollback concluído." ;;
     rollback_kept)   echo "    Arquivos mantidos. Use a opção Excluir para limpar depois." ;;
+    boot_q)          echo "Como o boot deve tratar esta montagem?" ;;
+    boot_opt_nowait) echo "Não esperar — o boot segue e a montagem sobe em segundo plano (padrão)" ;;
+    boot_opt_wait)   echo "Esperar a conexão, mas seguir o boot se falhar (recomendado p/ servidores)" ;;
+    boot_opt_require) echo "Esperar e exigir sucesso — o boot fica degradado se a montagem falhar" ;;
+    ask_boot_timeout) echo "Tempo máximo de espera no boot, em segundos [90]: " ;;
+    boot_lbl)        echo "Boot" ;;
+    sum_boot)        echo "    Boot:        " ;;
+    boot_mode_nowait) echo "não espera" ;;
+    boot_mode_wait)  echo "espera (não bloqueia)" ;;
+    boot_mode_require) echo "espera (obrigatória)" ;;
+    boot_warn_require) echo "AVISO: se o servidor estiver fora do ar, o boot esperará até o tempo limite e terminará em estado degradado." ;;
+    wait_online_check) echo "==> Verificando se o sistema aguarda a rede antes de concluir o boot..." ;;
+    wait_online_ok)  echo "    OK, já habilitado:" ;;
+    wait_online_off) echo "AVISO: serviço encontrado, porém desabilitado. Sem ele o network-online.target conclui de imediato e a montagem tende a falhar no boot:" ;;
+    wait_online_enable_q) echo "Habilitar agora? [Y/n]: " ;;
+    wait_online_enabled) echo "    Habilitado:" ;;
+    wait_online_none) echo "AVISO: nenhum serviço wait-online encontrado (NetworkManager/systemd-networkd). A montagem pode ser tentada antes de a rede estar pronta." ;;
+    deps_q)          echo "Serviços que devem iniciar só depois desta montagem (ex: docker.service; ENTER p/ nenhum): " ;;
+    deps_writing)    echo "==> Criando dependências de serviço..." ;;
+    deps_written)    echo "    Dependência criada:" ;;
+    deps_unknown)    echo "    AVISO: serviço não encontrado, ignorado:" ;;
+    deps_removing)   echo "==> Removendo dependências de serviço..." ;;
+    edit_opt_boot)   echo "Comportamento no boot" ;;
+    current_boot)    echo "Comportamento atual no boot:" ;;
   esac
 }
 
@@ -235,7 +259,7 @@ msg_en() {
     edit_what)       echo "What do you want to edit?" ;;
     edit_opt_creds)  echo "Credentials (user/password/domain)" ;;
     edit_opt_smbver) echo "SMB version" ;;
-    edit_choose_field) echo "Choose [0/1/2]: " ;;
+    edit_choose_field) echo "Choose [0/1/2/3]: " ;;
     cred_not_found)  echo "Credential file not found:" ;;
     current_smbver)  echo "Current SMB version:" ;;
     remounting)      echo "==> Remounting:" ;;
@@ -254,6 +278,30 @@ msg_en() {
     rollback_doing)  echo "==> Rolling back created files..." ;;
     rollback_done)   echo "    Rollback complete." ;;
     rollback_kept)   echo "    Files kept. Use the Delete option to clean up later." ;;
+    boot_q)          echo "How should boot treat this mount?" ;;
+    boot_opt_nowait) echo "Do not wait — boot continues and the mount comes up in the background (default)" ;;
+    boot_opt_wait)   echo "Wait for the connection, but continue booting if it fails (recommended for servers)" ;;
+    boot_opt_require) echo "Wait and require success — boot ends up degraded if the mount fails" ;;
+    ask_boot_timeout) echo "Maximum time to wait at boot, in seconds [90]: " ;;
+    boot_lbl)        echo "Boot" ;;
+    sum_boot)        echo "    Boot:        " ;;
+    boot_mode_nowait) echo "does not wait" ;;
+    boot_mode_wait)  echo "waits (non-blocking)" ;;
+    boot_mode_require) echo "waits (required)" ;;
+    boot_warn_require) echo "WARNING: if the server is down, boot will wait for the full timeout and finish in a degraded state." ;;
+    wait_online_check) echo "==> Checking whether the system waits for the network before finishing boot..." ;;
+    wait_online_ok)  echo "    OK, already enabled:" ;;
+    wait_online_off) echo "WARNING: service found but disabled. Without it network-online.target completes immediately and the mount is likely to fail at boot:" ;;
+    wait_online_enable_q) echo "Enable it now? [Y/n]: " ;;
+    wait_online_enabled) echo "    Enabled:" ;;
+    wait_online_none) echo "WARNING: no wait-online service found (NetworkManager/systemd-networkd). The mount may be attempted before the network is ready." ;;
+    deps_q)          echo "Services that must start only after this mount (e.g. docker.service; ENTER for none): " ;;
+    deps_writing)    echo "==> Creating service dependencies..." ;;
+    deps_written)    echo "    Dependency created:" ;;
+    deps_unknown)    echo "    WARNING: service not found, skipped:" ;;
+    deps_removing)   echo "==> Removing service dependencies..." ;;
+    edit_opt_boot)   echo "Boot behaviour" ;;
+    current_boot)    echo "Current boot behaviour:" ;;
   esac
 }
 
@@ -391,6 +439,7 @@ coletar_montagens() {
   WHATS=()
   WHERES=()
   CREDS=()
+  BOOTS=()
 
   for unit_file in "$UNIT_DIR"/*.mount; do
     [[ -f "$unit_file" ]] || continue
@@ -399,6 +448,7 @@ coletar_montagens() {
     WHATS+=("$(grep -m1 '^What=' "$unit_file" | cut -d= -f2-)")
     WHERES+=("$(grep -m1 '^Where=' "$unit_file" | cut -d= -f2-)")
     CREDS+=("$(grep -m1 'credentials=' "$unit_file" | grep -o 'credentials=[^ ,]*' | cut -d= -f2- || true)")
+    BOOTS+=("$(unit_boot_mode "$unit_file")")
   done
 }
 
@@ -411,6 +461,168 @@ status_unidade() {
     inactive) msg status_inactive ;;
     *)        msg status_unknown ;;
   esac
+}
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  COMPORTAMENTO NO BOOT / BOOT BEHAVIOUR                      ║
+# ╚══════════════════════════════════════════════════════════════╝
+#
+# Modo 1 - não espera: nofail + WantedBy=multi-user.target.
+#          O boot nunca aguarda a montagem.
+# Modo 2 - espera sem bloquear: nofail + Before/WantedBy=remote-fs.target.
+#          O boot aguarda a tentativa até TimeoutSec; falha não degrada o boot.
+# Modo 3 - espera e exige: sem nofail + Before/RequiredBy=remote-fs.target.
+#          O boot aguarda; se a montagem falhar, remote-fs.target falha junto.
+#
+# Mode 1 - do not wait: nofail + WantedBy=multi-user.target.
+# Mode 2 - wait, non-blocking: nofail + Before/WantedBy=remote-fs.target.
+# Mode 3 - wait and require: no nofail + Before/RequiredBy=remote-fs.target.
+
+# unit_boot_mode <unit_file> -> 1 | 2 | 3
+unit_boot_mode() {
+  local f="$1"
+  if grep -q '^RequiredBy=remote-fs.target' "$f" 2>/dev/null; then
+    echo 3
+  elif grep -q '^WantedBy=remote-fs.target' "$f" 2>/dev/null; then
+    echo 2
+  else
+    echo 1
+  fi
+}
+
+boot_mode_label() {
+  case "$1" in
+    2) msg boot_mode_wait ;;
+    3) msg boot_mode_require ;;
+    *) msg boot_mode_nowait ;;
+  esac
+}
+
+# Sem um serviço wait-online habilitado, network-online.target é atingido de
+# imediato e a montagem no boot falha mesmo com Requires=network-online.target.
+# Without an enabled wait-online service, network-online.target is reached
+# immediately and the boot-time mount fails despite Requires=network-online.target.
+verificar_wait_online() {
+  local svc="" s state
+
+  msg wait_online_check; echo
+  for s in NetworkManager-wait-online.service \
+           systemd-networkd-wait-online.service \
+           ifupdown-wait-online.service; do
+    if systemctl cat "$s" &>/dev/null; then svc="$s"; break; fi
+  done
+
+  # remote-fs.target precisa estar no boot para que a espera aconteça.
+  # remote-fs.target must be part of the boot transaction for the wait to happen.
+  sudo systemctl enable remote-fs.target &>/dev/null || true
+
+  if [[ -z "$svc" ]]; then
+    msg wait_online_none; echo
+    return
+  fi
+
+  state="$(systemctl is-enabled "$svc" 2>/dev/null || true)"
+  case "$state" in
+    enabled|enabled-runtime|static|indirect)
+      echo "$(msg wait_online_ok) $svc"
+      return
+      ;;
+  esac
+
+  echo "$(msg wait_online_off) $svc"
+  local ans=""
+  read -rp "$(msg wait_online_enable_q)" ans
+  ans="${ans:-y}"
+  if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
+    if sudo systemctl enable "$svc" &>/dev/null; then
+      echo "$(msg wait_online_enabled) $svc"
+    fi
+  fi
+}
+
+# gerar_unidade <unit_file> <desc> <what> <where> <base_opts> <mode> <timeout>
+# base_opts nunca deve conter nofail; a função adiciona conforme o modo.
+# base_opts must never contain nofail; the function adds it per mode.
+gerar_unidade() {
+  local unit_file="$1" desc="$2" what="$3" where="$4" opts="$5" mode="$6" tmo="$7"
+  local install_line=""
+  local deps="Requires=network-online.target
+After=network-online.target"
+
+  case "$mode" in
+    2)
+      opts="${opts},nofail"
+      deps="${deps}
+Before=remote-fs.target"
+      install_line="WantedBy=remote-fs.target"
+      ;;
+    3)
+      deps="${deps}
+Before=remote-fs.target"
+      install_line="RequiredBy=remote-fs.target"
+      ;;
+    *)
+      opts="${opts},nofail"
+      install_line="WantedBy=multi-user.target"
+      ;;
+  esac
+
+  sudo tee "$unit_file" > /dev/null <<EOF
+[Unit]
+Description=$desc
+${deps}
+
+[Mount]
+What=$what
+Where=$where
+Type=cifs
+Options=$opts
+TimeoutSec=$tmo
+
+[Install]
+$install_line
+EOF
+  sudo chown root:root "$unit_file"
+  sudo chmod 644 "$unit_file"
+}
+
+# aplicar_dependencias <escaped_unit_name> <mountpoint> <service...>
+# Escreve um drop-in RequiresMountsFor para cada serviço, de modo que ele só
+# inicie depois que a montagem estiver ativa.
+# Writes a RequiresMountsFor drop-in per service so it only starts once the
+# mount is up.
+aplicar_dependencias() {
+  local esc="$1" where="$2"
+  shift 2
+  local svc dropin_dir dropin
+
+  msg deps_writing; echo
+  for svc in "$@"; do
+    [[ -n "$svc" ]] || continue
+    [[ "$svc" == *.* ]] || svc="${svc}.service"
+    if ! systemctl cat "$svc" &>/dev/null; then
+      echo "$(msg deps_unknown) $svc"
+      continue
+    fi
+    dropin_dir="$UNIT_DIR/${svc}.d"
+    dropin="$dropin_dir/10-smb-wizard-${esc}.conf"
+    sudo mkdir -p "$dropin_dir"
+    printf '[Unit]\nRequiresMountsFor=%s\n' "$where" | sudo tee "$dropin" > /dev/null
+    sudo chmod 644 "$dropin"
+    echo "$(msg deps_written) $dropin"
+  done
+}
+
+# remover_dependencias <escaped_unit_name>
+remover_dependencias() {
+  local esc="$1" dropin dropin_dir
+  for dropin in "$UNIT_DIR"/*.d/10-smb-wizard-"${esc}".conf; do
+    [[ -f "$dropin" ]] || continue
+    dropin_dir="$(dirname "$dropin")"
+    sudo rm -f "$dropin"
+    echo "$(msg removed) $dropin"
+    sudo rmdir "$dropin_dir" 2>/dev/null || true
+  done
 }
 
 # ╔══════════════════════════════════════════════════════════════╗
@@ -434,6 +646,7 @@ listar_montagens() {
     echo "       $(msg server_lbl):    ${WHATS[$i]}"
     echo "       $(msg mount_lbl):    ${WHERES[$i]}"
     echo "       $(msg status_lbl):      $(status_unidade "$UNIT_NAME")"
+    echo "       $(msg boot_lbl):        $(boot_mode_label "${BOOTS[$i]}")"
     echo "       $(msg cred_lbl): ${CREDS[$i]:-$(msg cred_undef)}"
     echo
   done
@@ -471,6 +684,26 @@ criar_montagem() {
   read -rp "$(msg ask_smbver)" SMB_VERSION
   SMB_VERSION="${SMB_VERSION:-3.0}"
 
+  echo
+  msg boot_q; echo
+  menu_select \
+    "$(msg boot_opt_nowait)" \
+    "$(msg boot_opt_wait)" \
+    "$(msg boot_opt_require)"
+  BOOT_MODE="$SELECTED_INDEX"
+  (( BOOT_MODE >= 1 && BOOT_MODE <= 3 )) || BOOT_MODE=1
+
+  MOUNT_TIMEOUT=30
+  DEP_SERVICES=""
+  if (( BOOT_MODE > 1 )); then
+    (( BOOT_MODE == 3 )) && { echo; msg boot_warn_require; echo; }
+    echo
+    read -rp "$(msg ask_boot_timeout)" MOUNT_TIMEOUT
+    MOUNT_TIMEOUT="${MOUNT_TIMEOUT:-90}"
+    [[ "$MOUNT_TIMEOUT" =~ ^[0-9]+$ ]] || MOUNT_TIMEOUT=90
+    read -rp "$(msg deps_q)" DEP_SERVICES
+  fi
+
   UNIT_NAME="$(systemd-escape --path "$MOUNTPOINT")"
   UNIT_FILE="$UNIT_DIR/${UNIT_NAME}.mount"
   SAFE_SERVER="$(echo "$SERVER" | tr '.: ' '---')"
@@ -493,6 +726,7 @@ criar_montagem() {
   echo "$(msg sum_cred)$CRED_FILE"
   echo "$(msg sum_smbver)$SMB_VERSION"
   echo "$(msg sum_domain)${DOMAIN:-$(msg sum_nodomain)}"
+  echo "$(msg sum_boot)$(boot_mode_label "$BOOT_MODE") (TimeoutSec=${MOUNT_TIMEOUT}s)"
   echo
   read -rp "$(msg proceed)" CONFIRM
   CONFIRM="${CONFIRM:-n}"
@@ -549,6 +783,11 @@ criar_montagem() {
     msg preflight_skipped; echo
   fi
 
+  if (( BOOT_MODE > 1 )); then
+    echo
+    verificar_wait_online
+  fi
+
   # Verificar pasta com conteúdo
   if [[ -d "$MOUNTPOINT" ]] && [[ -n "$(ls -A "$MOUNTPOINT" 2>/dev/null)" ]]; then
     echo
@@ -594,24 +833,14 @@ criar_montagem() {
   [[ -n "$DOMAIN" ]] && printf 'domain=%s\n' "$DOMAIN" | sudo tee -a "$CRED_FILE" > /dev/null
 
   echo "$(msg generating) $UNIT_FILE"
-  sudo tee "$UNIT_FILE" > /dev/null <<EOF
-[Unit]
-Description=SMB Mount $MOUNTPOINT ($SHARE)
-Requires=network-online.target
-After=network-online.target
-
-[Mount]
-What=//$SERVER/$SHARE
-Where=$MOUNTPOINT
-Type=cifs
-Options=credentials=$CRED_FILE,vers=$SMB_VERSION,iocharset=utf8,file_mode=0666,dir_mode=0777,noperm,_netdev,nofail
-TimeoutSec=30
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  sudo chown root:root "$UNIT_FILE"
-  sudo chmod 644 "$UNIT_FILE"
+  gerar_unidade \
+    "$UNIT_FILE" \
+    "SMB Mount $MOUNTPOINT ($SHARE)" \
+    "//$SERVER/$SHARE" \
+    "$MOUNTPOINT" \
+    "credentials=$CRED_FILE,vers=$SMB_VERSION,iocharset=utf8,file_mode=0666,dir_mode=0777,noperm,_netdev" \
+    "$BOOT_MODE" \
+    "$MOUNT_TIMEOUT"
 
   msg validating; echo
   systemd-analyze verify "$UNIT_FILE" 2>&1 || {
@@ -645,6 +874,16 @@ EOF
     return
   fi
 
+  if (( BOOT_MODE > 1 )) && [[ -n "$DEP_SERVICES" ]]; then
+    echo
+    # Divisão intencional em palavras: lista de serviços separada por espaços.
+    # Intentional word splitting: whitespace-separated service list.
+    # shellcheck disable=SC2086
+    aplicar_dependencias "$UNIT_NAME" "$MOUNTPOINT" $DEP_SERVICES
+    sudo systemctl daemon-reload
+  fi
+
+  echo
   msg unit_status; echo
   sudo systemctl status "${UNIT_NAME}.mount" --no-pager || true
 
@@ -677,6 +916,7 @@ excluir_montagem() {
     echo "       $(msg server_lbl):    ${WHATS[$i]}"
     echo "       $(msg mount_lbl):     ${WHERES[$i]}"
     echo "       $(msg status_lbl):    $(status_unidade "$UNIT_NAME")"
+    echo "       $(msg boot_lbl):      $(boot_mode_label "${BOOTS[$i]}")"
     echo "       $(msg cred_lbl): ${CREDS[$i]:-$(msg cred_undef)}"
     echo
   done
@@ -754,6 +994,12 @@ excluir_montagem() {
     echo "$(msg disabled) $UNIT_NAME"
   done
 
+  msg deps_removing; echo
+  for unit_file in "${SELECTED_UNITS[@]}"; do
+    UNIT_NAME="$(basename "$unit_file")"
+    remover_dependencias "${UNIT_NAME%.mount}"
+  done
+
   msg removing_units; echo
   for unit_file in "${SELECTED_UNITS[@]}"; do
     sudo rm -f "$unit_file"
@@ -804,6 +1050,7 @@ editar_montagem() {
     echo "       $(msg server_lbl):    ${WHATS[$i]}"
     echo "       $(msg mount_lbl):     ${WHERES[$i]}"
     echo "       $(msg status_lbl):    $(status_unidade "$UNIT_NAME")"
+    echo "       $(msg boot_lbl):      $(boot_mode_label "${BOOTS[$i]}")"
     echo "       $(msg cred_lbl): ${CREDS[$i]:-$(msg cred_undef)}"
     echo
   done
@@ -839,13 +1086,16 @@ editar_montagem() {
   menu_select \
     "$(msg edit_opt_creds)" \
     "$(msg edit_opt_smbver)" \
+    "$(msg edit_opt_boot)" \
     "$(msg cancel)"
 
   local FIELD="$SELECTED_INDEX"
-  if (( FIELD == 0 || FIELD == 3 )); then
+  if (( FIELD == 0 || FIELD == 4 )); then
     msg cancelled; echo
     return
   fi
+
+  local REENABLE=0
 
   case "$FIELD" in
     1)
@@ -876,6 +1126,51 @@ editar_montagem() {
       echo "$(msg generating) $TARGET_UNIT"
       sudo sed -i -E "s/(vers=)[^,]+/\1${NEW_VER}/" "$TARGET_UNIT"
       ;;
+    3)
+      local CUR_MODE NEW_MODE NEW_TMO DESC WHAT WHERE OPTS
+      CUR_MODE="$(unit_boot_mode "$TARGET_UNIT")"
+      echo
+      echo "$(msg current_boot) $(boot_mode_label "$CUR_MODE")"
+      echo
+      msg boot_q; echo
+      menu_select \
+        "$(msg boot_opt_nowait)" \
+        "$(msg boot_opt_wait)" \
+        "$(msg boot_opt_require)" \
+        "$(msg cancel)"
+      NEW_MODE="$SELECTED_INDEX"
+      if (( NEW_MODE == 0 || NEW_MODE == 4 )); then
+        msg cancelled; echo
+        return
+      fi
+
+      NEW_TMO=30
+      if (( NEW_MODE > 1 )); then
+        (( NEW_MODE == 3 )) && { echo; msg boot_warn_require; echo; }
+        echo
+        read -rp "$(msg ask_boot_timeout)" NEW_TMO
+        NEW_TMO="${NEW_TMO:-90}"
+        [[ "$NEW_TMO" =~ ^[0-9]+$ ]] || NEW_TMO=90
+      fi
+
+      DESC="$(grep -m1 '^Description=' "$TARGET_UNIT" | cut -d= -f2-)"
+      WHAT="$(grep -m1 '^What=' "$TARGET_UNIT" | cut -d= -f2-)"
+      WHERE="$(grep -m1 '^Where=' "$TARGET_UNIT" | cut -d= -f2-)"
+      OPTS="$(grep -m1 '^Options=' "$TARGET_UNIT" | cut -d= -f2-)"
+      # nofail é reaplicado por gerar_unidade conforme o modo escolhido.
+      # nofail is re-applied by gerar_unidade according to the chosen mode.
+      OPTS="$(sed -E 's/(^|,)nofail(,|$)/\1/; s/,$//; s/^,//' <<< "$OPTS")"
+
+      if (( NEW_MODE > 1 )); then
+        echo
+        verificar_wait_online
+      fi
+
+      echo
+      echo "$(msg generating) $TARGET_UNIT"
+      gerar_unidade "$TARGET_UNIT" "$DESC" "$WHAT" "$WHERE" "$OPTS" "$NEW_MODE" "$NEW_TMO"
+      REENABLE=1
+      ;;
     *)
       msg invalid_opt; echo
       return
@@ -890,6 +1185,14 @@ editar_montagem() {
 
   msg reloading_sd; echo
   sudo systemctl daemon-reload
+
+  # A troca de modo muda a seção [Install]; refazer os symlinks.
+  # Switching modes changes the [Install] section; redo the symlinks.
+  if (( REENABLE == 1 )); then
+    echo "$(msg enabling) $UNIT_NAME"
+    sudo systemctl disable "$UNIT_NAME" &>/dev/null || true
+    sudo systemctl enable "$UNIT_NAME" || true
+  fi
 
   if mountpoint -q "$TARGET_WHERE" 2>/dev/null; then
     echo "$(msg remounting) $UNIT_NAME"
