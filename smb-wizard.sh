@@ -118,7 +118,7 @@ msg_pt() {
     edit_what)       echo "O que deseja editar?" ;;
     edit_opt_creds)  echo "Credenciais (usuário/senha/domínio)" ;;
     edit_opt_smbver) echo "Versão SMB" ;;
-    edit_choose_field) echo "Escolha [0/1/2/3]: " ;;
+    edit_choose_field) echo "Escolha [0/1/2/3/4]: " ;;
     cred_not_found)  echo "Arquivo de credenciais não encontrado:" ;;
     current_smbver)  echo "Versão SMB atual:" ;;
     remounting)      echo "==> Remontando:" ;;
@@ -160,6 +160,10 @@ msg_pt() {
     deps_other)      echo "Outro — digitar nomes manualmente" ;;
     deps_chosen)     echo "    Escolhidos:" ;;
     deps_nothing)    echo "    Nenhum serviço escolhido." ;;
+    edit_opt_deps)   echo "Serviços dependentes" ;;
+    current_deps)    echo "Serviços dependentes atuais:" ;;
+    deps_none_now)   echo "(nenhum)" ;;
+    deps_updating)   echo "==> Atualizando dependências de serviço..." ;;
     deps_writing)    echo "==> Criando dependências de serviço..." ;;
     deps_written)    echo "    Dependência criada:" ;;
     deps_unknown)    echo "    AVISO: serviço não encontrado, ignorado:" ;;
@@ -274,7 +278,7 @@ msg_en() {
     edit_what)       echo "What do you want to edit?" ;;
     edit_opt_creds)  echo "Credentials (user/password/domain)" ;;
     edit_opt_smbver) echo "SMB version" ;;
-    edit_choose_field) echo "Choose [0/1/2/3]: " ;;
+    edit_choose_field) echo "Choose [0/1/2/3/4]: " ;;
     cred_not_found)  echo "Credential file not found:" ;;
     current_smbver)  echo "Current SMB version:" ;;
     remounting)      echo "==> Remounting:" ;;
@@ -316,6 +320,10 @@ msg_en() {
     deps_other)      echo "Other — type names manually" ;;
     deps_chosen)     echo "    Chosen:" ;;
     deps_nothing)    echo "    No service chosen." ;;
+    edit_opt_deps)   echo "Dependent services" ;;
+    current_deps)    echo "Current dependent services:" ;;
+    deps_none_now)   echo "(none)" ;;
+    deps_updating)   echo "==> Updating service dependencies..." ;;
     deps_writing)    echo "==> Creating service dependencies..." ;;
     deps_written)    echo "    Dependency created:" ;;
     deps_unknown)    echo "    WARNING: service not found, skipped:" ;;
@@ -466,6 +474,7 @@ menu_select() {
 # ESC / q cancels (leaving the selection empty).
 # Falls back to a numbered prompt accepting several numbers when not a TTY.
 SELECTED_INDEXES=()
+MULTISELECT_PRESELECTED=""
 menu_multiselect() {
   local options=("$@")
   local n=${#options[@]}
@@ -474,7 +483,16 @@ menu_multiselect() {
 
   SELECTED_INDEXES=()
   (( n == 0 )) && return
-  for ((i = 0; i < n; i++)); do marks[i]=0; done
+
+  # MULTISELECT_PRESELECTED: rótulos já marcados ao abrir o menu.
+  # MULTISELECT_PRESELECTED: labels that start out checked.
+  local pre
+  for ((i = 0; i < n; i++)); do
+    marks[i]=0
+    for pre in ${MULTISELECT_PRESELECTED:-}; do
+      if [[ "$pre" == "${options[$i]}" ]]; then marks[i]=1; break; fi
+    done
+  done
 
   if [[ ! -t 0 || ! -t 1 ]]; then
     for i in "${!options[@]}"; do
@@ -829,12 +847,24 @@ detectar_servicos() {
   )
 }
 
-# escolher_dependencias -> DEP_SERVICES (lista separada por espaços)
+# escolher_dependencias [servicos_atuais] -> DEP_SERVICES (separado por espaços)
 escolher_dependencias() {
+  local current="${1:-}"
   DEP_SERVICES=""
-  local idx other=0 extra=""
+  local idx other=0 extra="" svc seen
 
   detectar_servicos
+
+  # Serviços já configurados que a varredura não reconhece (digitados à mão numa
+  # execução anterior) precisam aparecer, senão editar apagaria a escolha.
+  # Already-configured services the scan does not know about (typed by hand in an
+  # earlier run) must still show, otherwise editing would silently drop them.
+  for svc in $current; do
+    for seen in ${DEP_CANDIDATES[@]+"${DEP_CANDIDATES[@]}"}; do
+      [[ "$seen" == "$svc" ]] && continue 2
+    done
+    DEP_CANDIDATES+=("$svc")
+  done
 
   # Nada reconhecido nesta máquina: cai no campo livre de sempre.
   # Nothing recognised here: fall back to the plain free-text field.
@@ -850,7 +880,9 @@ escolher_dependencias() {
 
   local labels=("${DEP_CANDIDATES[@]}")
   labels+=("$(msg deps_other)")
+  MULTISELECT_PRESELECTED="$current"
   menu_multiselect "${labels[@]}"
+  MULTISELECT_PRESELECTED=""
 
   for idx in ${SELECTED_INDEXES[@]+"${SELECTED_INDEXES[@]}"}; do
     if (( idx == ${#labels[@]} )); then
@@ -901,6 +933,17 @@ aplicar_dependencias() {
     sudo chmod 644 "$dropin"
     echo "$(msg deps_written) $dropin"
   done
+}
+
+# listar_dependencias <escaped_unit_name> -> serviços já configurados
+listar_dependencias() {
+  local esc="$1" dropin dir out=""
+  for dropin in "$UNIT_DIR"/*.d/10-smb-wizard-"${esc}".conf; do
+    [[ -f "$dropin" ]] || continue
+    dir="$(basename "$(dirname "$dropin")")"
+    out="$out ${dir%.d}"
+  done
+  echo "${out# }"
 }
 
 # remover_dependencias <escaped_unit_name>
@@ -1413,15 +1456,19 @@ editar_montagem() {
     "$(msg edit_opt_creds)" \
     "$(msg edit_opt_smbver)" \
     "$(msg edit_opt_boot)" \
+    "$(msg edit_opt_deps)" \
     "$(msg cancel)"
 
   local FIELD="$SELECTED_INDEX"
-  if (( FIELD == 0 || FIELD == 4 )); then
+  if (( FIELD == 0 || FIELD == 5 )); then
     msg cancelled; echo
     return
   fi
 
   local REENABLE=0
+  # Alterar só os drop-ins de outros serviços não justifica remontar.
+  # Changing only other services' drop-ins is no reason to remount.
+  local REMOUNT=1
 
   case "$FIELD" in
     1)
@@ -1531,6 +1578,26 @@ editar_montagem() {
       gerar_unidade "$TARGET_UNIT" "$DESC" "$WHAT" "$WHERE" "$OPTS" "$NEW_MODE" "$NEW_TMO" "$NEW_WAIT"
       REENABLE=1
       ;;
+    4)
+      local ESC CUR_DEPS
+      ESC="${UNIT_NAME%.mount}"
+      CUR_DEPS="$(listar_dependencias "$ESC")"
+      echo
+      echo "$(msg current_deps) ${CUR_DEPS:-$(msg deps_none_now)}"
+
+      escolher_dependencias "$CUR_DEPS"
+
+      echo
+      msg deps_updating; echo
+      remover_dependencias "$ESC"
+      if [[ -n "$DEP_SERVICES" ]]; then
+        # Divisão intencional em palavras: lista separada por espaços.
+        # Intentional word splitting: whitespace-separated list.
+        # shellcheck disable=SC2086
+        aplicar_dependencias "$ESC" "$TARGET_WHERE" $DEP_SERVICES
+      fi
+      REMOUNT=0
+      ;;
     *)
       msg invalid_opt; echo
       return
@@ -1554,7 +1621,7 @@ editar_montagem() {
     sudo systemctl enable "$UNIT_NAME" || true
   fi
 
-  if mountpoint -q "$TARGET_WHERE" 2>/dev/null; then
+  if (( REMOUNT == 1 )) && mountpoint -q "$TARGET_WHERE" 2>/dev/null; then
     echo "$(msg remounting) $UNIT_NAME"
     sudo systemctl restart "$UNIT_NAME" || true
   fi

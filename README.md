@@ -25,7 +25,7 @@ Bilingual (English / Portuguese) interactive wizard to create, list, edit and de
 - Selectable boot behaviour: let boot continue while the share mounts in the background, or hold the boot until the remote server answers. See [Boot behaviour](#boot-behaviour).
 - Optionally waits for the server's SMB port to answer before mounting, so a NAS that boots slower than the client does not leave the mount failed. See [Waiting for a slow server](#waiting-for-a-slow-server).
 - Optionally makes other services (Docker, Home Assistant, …) start only after the share is mounted, via a `RequiresMountsFor` drop-in.
-- Edit existing mounts: change credentials, SMB protocol version or boot behaviour, with `daemon-reload` and live remount.
+- Edit existing mounts: change credentials, SMB protocol version, boot behaviour or dependent services, with `daemon-reload` and live remount.
 - Cleanup option that removes one or all mounts, with their units, credential files and empty mountpoint directories.
 
 ### Dependencies
@@ -65,7 +65,7 @@ The interactive menu offers:
 1. List mounts — show all SMB mounts configured via the wizard
 2. Create a mount — prompts for server, share, mount point, credentials, SMB version and boot behaviour
 3. Delete a mount — remove one or all SMB mounts
-4. Edit a mount — change credentials, SMB version or boot behaviour of an existing mount
+4. Edit a mount — change credentials, SMB version, boot behaviour or dependent services of an existing mount
 5. Exit
 
 ### Boot behaviour
@@ -200,6 +200,14 @@ Prefer a narrow unit over a broad one where you have the choice: a drop-in on
 `docker-compose@midia.service` orders just that project behind the mount, while
 one on `docker.service` puts every container on this machine behind it.
 
+The selection can be revisited later through *Edit a mount* → *Dependent
+services*, without recreating the mount. The menu opens with the currently
+configured services already checked, so confirming with ENTER changes nothing;
+services configured earlier that the scan does not recognise are listed too, so
+editing never silently drops them. The new selection replaces the old one — the
+previous drop-ins are removed and the chosen ones written. Since this only
+touches other units' drop-ins, the share is not remounted.
+
 ### License
 
 MIT — see `LICENSE`.
@@ -222,7 +230,7 @@ Wizard interativo bilíngue (português / inglês) para criar, listar, editar e 
 - Comportamento no boot selecionável: deixar o boot seguir enquanto o compartilhamento monta em segundo plano, ou segurar o boot até o servidor remoto responder. Veja [Comportamento no boot](#comportamento-no-boot).
 - Opcionalmente aguarda a porta SMB do servidor responder antes de montar, para que um NAS que liga mais devagar que o cliente não deixe a montagem falhada. Veja [Aguardando um servidor lento](#aguardando-um-servidor-lento).
 - Opcionalmente faz outros serviços (Docker, Home Assistant, …) iniciarem só depois que o compartilhamento estiver montado, via drop-in `RequiresMountsFor`.
-- Edição de montagens existentes: trocar credenciais, versão do protocolo SMB ou comportamento no boot, com `daemon-reload` e remontagem ao vivo.
+- Edição de montagens existentes: trocar credenciais, versão do protocolo SMB, comportamento no boot ou serviços dependentes, com `daemon-reload` e remontagem ao vivo.
 - Limpeza removendo uma ou todas as montagens, com suas unidades, arquivos de credencial e diretórios vazios.
 
 ### Dependências
@@ -262,7 +270,7 @@ O menu interativo oferece:
 1. Listar montagens — mostra todas as montagens SMB configuradas pelo wizard
 2. Criar uma montagem — solicita servidor, compartilhamento, ponto de montagem, credenciais, versão SMB e comportamento no boot
 3. Excluir uma montagem — remove uma ou todas as montagens SMB
-4. Editar uma montagem — troca credenciais, versão SMB ou comportamento no boot de uma montagem existente
+4. Editar uma montagem — troca credenciais, versão SMB, comportamento no boot ou serviços dependentes de uma montagem existente
 5. Sair
 
 ### Comportamento no boot
@@ -399,6 +407,15 @@ Prefira a unidade mais estreita quando tiver escolha: um drop-in em
 `docker-compose@midia.service` ordena só aquele projeto atrás da montagem,
 enquanto um em `docker.service` coloca todos os contêineres da máquina atrás
 dela.
+
+A escolha pode ser revista depois em *Editar uma montagem* → *Serviços
+dependentes*, sem precisar recriar a montagem. O menu abre com os serviços já
+configurados marcados, então confirmar com ENTER não muda nada; serviços
+configurados antes que a varredura não reconhece também aparecem na lista, de
+modo que editar nunca os descarta em silêncio. A nova seleção substitui a
+anterior — os drop-ins antigos são removidos e os escolhidos são gravados. Como
+isso mexe apenas em drop-ins de outras unidades, o compartilhamento não é
+remontado.
 
 ### Licença
 
