@@ -93,10 +93,8 @@ For the two waiting modes the wizard also:
   is ordered before;
 - optionally asks for services that must start only after the mount, and writes
   `/etc/systemd/system/<service>.d/10-smb-wizard-<mount>.conf` containing
-  `RequiresMountsFor=<mount point>`. On Raspberry Pi OS with Docker, answering
-  `docker.service` here is usually what you want so containers with bind mounts
-  into the share do not start against an empty directory. These drop-ins are
-  removed together with the mount by the *Delete a mount* option.
+  `RequiresMountsFor=<mount point>`. These drop-ins are removed together with the
+  mount by the *Delete a mount* option. See [Picking dependent services](#picking-dependent-services).
 
 Boot behaviour is shown for every mount in the listing, and switching a mount
 between modes rewrites the unit and redoes the `systemctl enable` symlinks.
@@ -168,6 +166,39 @@ DNS.
 The wait service is removed together with the mount by *Delete a mount*, and can
 be added to or removed from an existing mount through *Edit a mount* → *Boot
 behaviour*.
+
+### Picking dependent services
+
+The wizard scans the machine for services that plausibly consume a network
+share and offers the ones that actually exist, in a checkbox menu — **SPACE**
+toggles, digits `1`–`9` toggle, **ENTER** confirms, **ESC** or `q` selects none.
+Several can be picked at once:
+
+```
+Which services must start only after this mount?
+(SPACE toggles, ENTER confirms, ESC selects none)
+
+  > [x] 1) docker.service
+    [ ] 2) jellyfin.service
+    [x] 3) docker-compose@midia.service
+    [ ] 4) Other — type names manually
+```
+
+It looks for the common container runtimes and media/home-automation services
+(`docker`, `podman`, `jellyfin`, `plexmediaserver`, `emby-server`,
+`home-assistant`, `hass`) plus live instances of the usual templates
+(`docker-compose@*`, `compose@*`, `podman-compose@*`, `home-assistant@*`). Bare
+templates such as `docker-compose@.service` are filtered out, since an
+uninstantiated template cannot be started.
+
+Picking **Other** adds a free-text field on top of whatever was checked, so any
+unit the scan missed can still be named (several, separated by spaces). If the
+scan finds nothing at all, that free-text field is offered directly instead of
+the menu.
+
+Prefer a narrow unit over a broad one where you have the choice: a drop-in on
+`docker-compose@midia.service` orders just that project behind the mount, while
+one on `docker.service` puts every container on this machine behind it.
 
 ### License
 
@@ -260,11 +291,9 @@ Nos dois modos de espera o wizard também:
   qual a montagem é ordenada;
 - opcionalmente pergunta quais serviços devem iniciar só depois da montagem e
   grava `/etc/systemd/system/<serviço>.d/10-smb-wizard-<montagem>.conf` com
-  `RequiresMountsFor=<ponto de montagem>`. No Raspberry Pi OS com Docker,
-  responder `docker.service` aqui costuma ser o que você quer, para que
-  contêineres com bind mounts para dentro do compartilhamento não subam contra
-  um diretório vazio. Esses drop-ins são removidos junto com a montagem pela
-  opção *Excluir uma montagem*.
+  `RequiresMountsFor=<ponto de montagem>`. Esses drop-ins são removidos junto com
+  a montagem pela opção *Excluir uma montagem*. Veja
+  [Escolhendo os serviços dependentes](#escolhendo-os-serviços-dependentes).
 
 O comportamento no boot é exibido para cada montagem na listagem, e trocar de
 modo reescreve a unidade e refaz os symlinks do `systemctl enable`.
@@ -336,6 +365,40 @@ responder.
 O serviço de espera é removido junto com a montagem pela opção *Excluir uma
 montagem*, e pode ser adicionado ou retirado de uma montagem existente em
 *Editar uma montagem* → *Comportamento no boot*.
+
+### Escolhendo os serviços dependentes
+
+O wizard varre a máquina atrás de serviços que plausivelmente consomem um
+compartilhamento de rede e oferece os que existem de fato, num menu de marcação —
+**ESPAÇO** marca/desmarca, os dígitos `1`–`9` também alternam, **ENTER** confirma
+e **ESC** ou `q` não escolhe nenhum. Dá para marcar vários de uma vez:
+
+```
+Quais serviços devem iniciar só depois desta montagem?
+(ESPAÇO marca/desmarca, ENTER confirma, ESC não escolhe nenhum)
+
+  > [x] 1) docker.service
+    [ ] 2) jellyfin.service
+    [x] 3) docker-compose@midia.service
+    [ ] 4) Outro — digitar nomes manualmente
+```
+
+Ele procura os runtimes de contêiner e serviços de mídia/automação mais comuns
+(`docker`, `podman`, `jellyfin`, `plexmediaserver`, `emby-server`,
+`home-assistant`, `hass`) e mais as instâncias vivas dos templates usuais
+(`docker-compose@*`, `compose@*`, `podman-compose@*`, `home-assistant@*`).
+Templates puros como `docker-compose@.service` ficam de fora, já que um template
+sem instância não pode ser iniciado.
+
+Marcar **Outro** abre um campo livre por cima do que já foi marcado, então
+qualquer unidade que a varredura não pegou ainda pode ser informada (várias,
+separadas por espaço). Se a varredura não achar nada, esse campo livre é
+oferecido direto, no lugar do menu.
+
+Prefira a unidade mais estreita quando tiver escolha: um drop-in em
+`docker-compose@midia.service` ordena só aquele projeto atrás da montagem,
+enquanto um em `docker.service` coloca todos os contêineres da máquina atrás
+dela.
 
 ### Licença
 

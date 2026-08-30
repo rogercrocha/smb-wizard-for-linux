@@ -155,6 +155,11 @@ msg_pt() {
     wait_online_enabled) echo "    Habilitado:" ;;
     wait_online_none) echo "AVISO: nenhum serviço wait-online encontrado (NetworkManager/systemd-networkd). A montagem pode ser tentada antes de a rede estar pronta." ;;
     deps_q)          echo "Serviços que devem iniciar só depois desta montagem (ex: docker.service; ENTER p/ nenhum): " ;;
+    deps_pick)       echo "Quais serviços devem iniciar só depois desta montagem?" ;;
+    deps_hint)       echo "(ESPAÇO marca/desmarca, ENTER confirma, ESC não escolhe nenhum)" ;;
+    deps_other)      echo "Outro — digitar nomes manualmente" ;;
+    deps_chosen)     echo "    Escolhidos:" ;;
+    deps_nothing)    echo "    Nenhum serviço escolhido." ;;
     deps_writing)    echo "==> Criando dependências de serviço..." ;;
     deps_written)    echo "    Dependência criada:" ;;
     deps_unknown)    echo "    AVISO: serviço não encontrado, ignorado:" ;;
@@ -306,6 +311,11 @@ msg_en() {
     wait_online_enabled) echo "    Enabled:" ;;
     wait_online_none) echo "WARNING: no wait-online service found (NetworkManager/systemd-networkd). The mount may be attempted before the network is ready." ;;
     deps_q)          echo "Services that must start only after this mount (e.g. docker.service; ENTER for none): " ;;
+    deps_pick)       echo "Which services must start only after this mount?" ;;
+    deps_hint)       echo "(SPACE toggles, ENTER confirms, ESC selects none)" ;;
+    deps_other)      echo "Other — type names manually" ;;
+    deps_chosen)     echo "    Chosen:" ;;
+    deps_nothing)    echo "    No service chosen." ;;
     deps_writing)    echo "==> Creating service dependencies..." ;;
     deps_written)    echo "    Dependency created:" ;;
     deps_unknown)    echo "    WARNING: service not found, skipped:" ;;
@@ -445,6 +455,98 @@ menu_select() {
 
     tput cuu "$n" 2>/dev/null || true
     _menu_render
+  done
+
+  tput cnorm 2>/dev/null || true
+}
+
+# menu_multiselect <label1> <label2> ...
+# Sets globals: SELECTED_INDEXES (array of 1-based indexes, empty if none)
+# Navigation: ↑/↓ move, SPACE toggles, digits 1-9 toggle, ENTER confirms,
+# ESC / q cancels (leaving the selection empty).
+# Falls back to a numbered prompt accepting several numbers when not a TTY.
+SELECTED_INDEXES=()
+menu_multiselect() {
+  local options=("$@")
+  local n=${#options[@]}
+  local cursor=0
+  local marks=() key="" rest="" i
+
+  SELECTED_INDEXES=()
+  (( n == 0 )) && return
+  for ((i = 0; i < n; i++)); do marks[i]=0; done
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    for i in "${!options[@]}"; do
+      echo "  $((i+1))) ${options[$i]}"
+    done
+    local line=""
+    read -r line || true
+    for i in $line; do
+      if [[ "$i" =~ ^[0-9]+$ ]] && (( i >= 1 && i <= n )); then
+        SELECTED_INDEXES+=("$i")
+      fi
+    done
+    return
+  fi
+
+  _multi_render() {
+    local idx box
+    for idx in "${!options[@]}"; do
+      tput el 2>/dev/null || true
+      if (( marks[idx] == 1 )); then box="[x]"; else box="[ ]"; fi
+      if (( idx == cursor )); then
+        printf "\e[7m  > %s %d) %s  \e[0m\n" "$box" "$((idx+1))" "${options[$idx]}"
+      else
+        printf "    %s %d) %s\n" "$box" "$((idx+1))" "${options[$idx]}"
+      fi
+    done
+  }
+
+  tput civis 2>/dev/null || true
+  _multi_render
+
+  while true; do
+    IFS= read -rsn1 key || break
+    case "$key" in
+      $'\e')
+        rest=""
+        read -rsn2 -t 0.01 rest 2>/dev/null || true
+        case "$rest" in
+          '[A') (( cursor > 0 )) && cursor=$((cursor - 1)) ;;
+          '[B') (( cursor < n - 1 )) && cursor=$((cursor + 1)) ;;
+          *)
+            SELECTED_INDEXES=()
+            tput cnorm 2>/dev/null || true
+            return
+            ;;
+        esac
+        ;;
+      ' ')
+        if (( marks[cursor] == 1 )); then marks[cursor]=0; else marks[cursor]=1; fi
+        ;;
+      [1-9])
+        if (( key <= n )); then
+          cursor=$((key - 1))
+          if (( marks[cursor] == 1 )); then marks[cursor]=0; else marks[cursor]=1; fi
+        fi
+        ;;
+      '')
+        for i in "${!options[@]}"; do
+          (( marks[i] == 1 )) && SELECTED_INDEXES+=("$((i+1))")
+        done
+        tput cnorm 2>/dev/null || true
+        return
+        ;;
+      q|Q)
+        SELECTED_INDEXES=()
+        tput cnorm 2>/dev/null || true
+        return
+        ;;
+    esac
+
+    tput cuu "$n" 2>/dev/null || true
+    _multi_render
   done
 
   tput cnorm 2>/dev/null || true
@@ -688,6 +790,92 @@ remover_unidade_espera() {
   echo "$(msg removed) $file"
 }
 
+# Descobre serviços que plausivelmente consomem o compartilhamento. Só entram os
+# que existem de fato nesta máquina; instâncias de template (docker-compose@x)
+# são preferíveis ao docker.service inteiro, porque reiniciar aquele derruba
+# todos os contêineres.
+# Discovers services that plausibly consume the share. Only ones that actually
+# exist here are offered; template instances (docker-compose@x) are preferable
+# to docker.service as a whole, since restarting that takes down every container.
+detectar_servicos() {
+  DEP_CANDIDATES=()
+  local svc seen
+
+  for svc in docker.service podman.service \
+             home-assistant.service hass.service \
+             jellyfin.service plexmediaserver.service emby-server.service; do
+    systemctl cat "$svc" &>/dev/null && DEP_CANDIDATES+=("$svc")
+  done
+
+  # Instâncias de templates (docker-compose@midia.service etc), carregadas ou
+  # apenas habilitadas. O template puro (nome terminado em @.service) não pode
+  # ser iniciado, então fica de fora.
+  while read -r svc; do
+    [[ -n "$svc" ]] || continue
+    [[ "$svc" == *@.service ]] && continue
+    for seen in ${DEP_CANDIDATES[@]+"${DEP_CANDIDATES[@]}"}; do
+      [[ "$seen" == "$svc" ]] && continue 2
+    done
+    DEP_CANDIDATES+=("$svc")
+  done < <(
+    {
+      systemctl list-units --all --no-legend --plain --type=service \
+        'docker-compose@*.service' 'compose@*.service' 'podman-compose@*.service' \
+        'home-assistant@*.service' 2>/dev/null
+      systemctl list-unit-files --no-legend \
+        'docker-compose@*.service' 'compose@*.service' 'podman-compose@*.service' \
+        'home-assistant@*.service' 2>/dev/null
+    } | awk '{print $1}' | sort -u
+  )
+}
+
+# escolher_dependencias -> DEP_SERVICES (lista separada por espaços)
+escolher_dependencias() {
+  DEP_SERVICES=""
+  local idx other=0 extra=""
+
+  detectar_servicos
+
+  # Nada reconhecido nesta máquina: cai no campo livre de sempre.
+  # Nothing recognised here: fall back to the plain free-text field.
+  if (( ${#DEP_CANDIDATES[@]} == 0 )); then
+    read -rp "$(msg deps_q)" DEP_SERVICES
+    return
+  fi
+
+  echo
+  msg deps_pick; echo
+  msg deps_hint; echo
+  echo
+
+  local labels=("${DEP_CANDIDATES[@]}")
+  labels+=("$(msg deps_other)")
+  menu_multiselect "${labels[@]}"
+
+  for idx in ${SELECTED_INDEXES[@]+"${SELECTED_INDEXES[@]}"}; do
+    if (( idx == ${#labels[@]} )); then
+      other=1
+    else
+      DEP_SERVICES="$DEP_SERVICES ${DEP_CANDIDATES[$((idx-1))]}"
+    fi
+  done
+
+  if (( other == 1 )); then
+    echo
+    read -rp "$(msg deps_q)" extra
+    [[ -n "$extra" ]] && DEP_SERVICES="$DEP_SERVICES $extra"
+  fi
+
+  DEP_SERVICES="${DEP_SERVICES# }"
+
+  echo
+  if [[ -n "$DEP_SERVICES" ]]; then
+    echo "$(msg deps_chosen) $DEP_SERVICES"
+  else
+    msg deps_nothing; echo
+  fi
+}
+
 # aplicar_dependencias <escaped_unit_name> <mountpoint> <service...>
 # Escreve um drop-in RequiresMountsFor para cada serviço, de modo que ele só
 # inicie depois que a montagem estiver ativa.
@@ -819,8 +1007,7 @@ criar_montagem() {
       [[ "$WAIT_DEADLINE" =~ ^[0-9]+$ ]] && (( WAIT_DEADLINE > 0 )) || WAIT_DEADLINE=600
     fi
 
-    echo
-    read -rp "$(msg deps_q)" DEP_SERVICES
+    escolher_dependencias
   fi
 
   UNIT_NAME="$(systemd-escape --path "$MOUNTPOINT")"
